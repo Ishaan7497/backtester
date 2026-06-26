@@ -41,6 +41,13 @@ SLOW_MA = 50               # slow (long) moving average, in days
 
 COST_PER_TRADE = 0.001     # fee per trade (0.001 = 0.1%)
 
+# What to run:
+#   "single" -> test the one FAST_MA / SLOW_MA combo above (and draw the chart)
+#   "sweep"  -> test many combos below, rank them, and draw a heatmap
+MODE = "single"
+SWEEP_FAST = [5, 10, 20, 50]      # fast windows to try in sweep mode
+SWEEP_SLOW = [50, 100, 150, 200]  # slow windows to try in sweep mode
+
 # ============================================================
 #   (you don't need to touch anything below this line)
 # ============================================================
@@ -50,7 +57,14 @@ def get_prices(ticker, start, end):
     """Download daily closing prices from Yahoo Finance."""
     data = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
     if data.empty:
-        raise SystemExit(f"No data found for '{ticker}'. Check the symbol and dates.")
+        raise SystemExit(
+            f"No data came back for '{ticker}'.\n"
+            f"This usually isn't a bad symbol — it's almost always one of:\n"
+            f"  1) Yahoo Finance temporarily rate-limited you (too many requests"
+            f" in a short time). Wait ~30-60 seconds and try again.\n"
+            f"  2) yfinance is out of date. Try: pip install --upgrade yfinance\n"
+            f"  3) The symbol or date range really is wrong — double check it."
+        )
     # yfinance sometimes returns columns with two levels; flatten to just "Close".
     close = data["Close"]
     if isinstance(close, pd.DataFrame):
@@ -65,15 +79,15 @@ def run_backtest(data, short_window, long_window, cost_per_trade):
     data["ma_short"] = data["Close"].rolling(short_window).mean()
     data["ma_long"] = data["Close"].rolling(long_window).mean()
 
-    # 2) The signal: 1 = "we want to be in the stock", 0 = "we want cash".
-    data["signal"] = (data["ma_short"] > data["ma_long"]).astype(int)
+    # 2) The target: 1.0 = "be fully in the stock", 0 = "be in cash".
+    target = (data["ma_short"] > data["ma_long"]).astype(float)
 
     # 3) THE MOST IMPORTANT LINE.
-    #    We act on YESTERDAY'S signal, not today's. In real life you can't see
+    #    We act on YESTERDAY'S target, not today's. In real life you can't see
     #    today's closing price and trade at that same close — so we shift the
-    #    signal forward one day. Skipping this is the #1 way beginners fool
+    #    target forward one day. Skipping this is the #1 way beginners fool
     #    themselves into fake profits ("lookahead bias").
-    data["position"] = data["signal"].shift(1).fillna(0)
+    data["position"] = target.shift(1).fillna(0)
 
     # 4) The stock's daily percentage change.
     data["mkt_ret"] = data["Close"].pct_change().fillna(0)
@@ -82,15 +96,52 @@ def run_backtest(data, short_window, long_window, cost_per_trade):
     data["strat_ret"] = data["position"] * data["mkt_ret"]
 
     # 6) Every time the position changes, a trade happened — subtract a cost.
-    trades = data["position"].diff().abs().fillna(0)
-    data["strat_ret"] = data["strat_ret"] - trades * cost_per_trade
+    turnover = data["position"].diff().abs().fillna(0)
+    data["strat_ret"] = data["strat_ret"] - turnover * cost_per_trade
 
     # 7) Turn the stream of daily returns into a growing account balance,
     #    starting from $1. This is what we plot.
     data["strat_equity"] = (1 + data["strat_ret"]).cumprod()
     data["hold_equity"] = (1 + data["mkt_ret"]).cumprod()
 
-    return data, int(trades.sum())
+    # Count a "trade" as moving in or out of the market (flat <-> invested).
+    in_market = (data["position"] > 0).astype(int)
+    n_trades = int(in_market.diff().abs().fillna(0).sum())
+
+    return data, n_trades
+
+
+def trade_breakdown(data, cost_per_trade):
+    """Pair each buy with its sell to see which round-trips made money.
+
+    A "round-trip" is one full buy-then-sell cycle. For each one we check the
+    price we bought at vs. the price we sold at (minus the two fees) and call it
+    a win if it ended positive, a loss otherwise. If we're still holding at the
+    end, we close that final trade at the last price.
+    """
+    position = data["position"].values
+    price = data["Close"].values
+    results = []
+    entry_price = None
+
+    for i in range(1, len(position)):
+        bought = position[i] > 0 and position[i - 1] == 0
+        sold = position[i] == 0 and position[i - 1] > 0
+
+        if bought:
+            entry_price = price[i]
+        elif sold and entry_price is not None:
+            net = price[i] / entry_price - 1 - 2 * cost_per_trade
+            results.append(net)
+            entry_price = None
+
+    # Still holding when the test ended? Close it at the last price.
+    if entry_price is not None:
+        results.append(price[-1] / entry_price - 1 - 2 * cost_per_trade)
+
+    wins = sum(1 for r in results if r > 0)
+    losses = len(results) - wins
+    return wins, losses
 
 
 def summarize(equity, returns):
@@ -102,6 +153,130 @@ def summarize(equity, returns):
     peak = equity.cummax()
     max_drawdown = ((equity - peak) / peak).min()
     return total_return, sharpe, max_drawdown
+
+
+def print_single_result(ticker, fast, slow, data, n_trades, cost):
+    """Print the summary table for one backtest."""
+    strat = summarize(data["strat_equity"], data["strat_ret"])
+    hold = summarize(data["hold_equity"], data["mkt_ret"])
+    wins, losses = trade_breakdown(data, cost)
+    round_trips = wins + losses
+    win_rate = wins / round_trips if round_trips else 0
+
+    print("\n" + "=" * 52)
+    print(f"  Results for {ticker}  ({fast}/{slow}-day crossover)")
+    print("=" * 52)
+    print(f"  {'':14}{'Strategy':>12}{'Buy & Hold':>14}")
+    print(f"  {'Total return':14}{strat[0]:>11.1%}{hold[0]:>14.1%}")
+    print(f"  {'Sharpe ratio':14}{strat[1]:>11.2f}{hold[1]:>14.2f}")
+    print(f"  {'Max drawdown':14}{strat[2]:>11.1%}{hold[2]:>14.1%}")
+    print(f"  {'Trades made':14}{n_trades:>11}")
+    print("-" * 52)
+    print(f"  Completed round-trips: {round_trips}   "
+          f"wins: {wins}   losses: {losses}   win rate: {win_rate:.0%}")
+    print("=" * 52)
+
+
+def save_chart(ticker, fast, slow, data):
+    """Two-panel chart: price + moving averages with buy/sell marks, and equity."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+    ax1.plot(data.index, data["Close"], label="Price", linewidth=1.5, alpha=0.7, color="gray")
+    ax1.plot(data.index, data["ma_short"], label=f"Short MA ({fast}d)", linewidth=1.8, color="blue")
+    ax1.plot(data.index, data["ma_long"], label=f"Long MA ({slow}d)", linewidth=1.8, color="orange")
+
+    # Buy/sell marks = days we moved into or out of the market.
+    in_market = (data["position"] > 0).astype(int)
+    moves = in_market.diff().fillna(0)
+    buys = data.index[moves == 1]
+    sells = data.index[moves == -1]
+    ax1.scatter(buys, data.loc[buys, "Close"], marker="^", color="green", s=100, label="Buy", zorder=5)
+    ax1.scatter(sells, data.loc[sells, "Close"], marker="v", color="red", s=100, label="Sell", zorder=5)
+
+    ax1.set_ylabel("Price ($)")
+    ax1.set_title(f"{ticker}: Moving Average Crossover ({fast}/{slow}-day)")
+    ax1.legend(loc="upper left", fontsize=9)
+    ax1.grid(alpha=0.3)
+
+    ax2.plot(data.index, data["strat_equity"], label="Strategy", linewidth=1.8, color="blue")
+    ax2.plot(data.index, data["hold_equity"], label="Buy & Hold", linewidth=1.8, alpha=0.7, color="gray")
+    ax2.set_ylabel("Account value (started at $1)")
+    ax2.set_xlabel("Date")
+    ax2.legend(loc="upper left", fontsize=9)
+    ax2.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig("results.png", dpi=120)
+    print("\nChart saved to results.png (2 panels: strategy trades + equity curves)")
+
+
+def run_sweep(prices, fast_list, slow_list, cost, ticker):
+    """Test many fast/slow combos, print a ranked table, and draw a heatmap."""
+    rows = []
+    for fast in fast_list:
+        for slow in slow_list:
+            if fast >= slow:
+                continue  # fast must be shorter than slow
+            d, n_trades = run_backtest(prices.copy(), fast, slow, cost)
+            total, sharpe, max_dd = summarize(d["strat_equity"], d["strat_ret"])
+            rows.append((fast, slow, total, sharpe, max_dd, n_trades))
+
+    rows.sort(key=lambda r: r[2], reverse=True)  # best total return first
+
+    # Buy & hold baseline (same for every combo).
+    mkt_ret = prices["Close"].pct_change().fillna(0)
+    base = summarize((1 + mkt_ret).cumprod(), mkt_ret)
+
+    print("\n" + "=" * 58)
+    print(f"  Parameter sweep for {ticker}")
+    print("=" * 58)
+    print(f"  {'Fast':>6}{'Slow':>6}{'Return':>10}{'Sharpe':>9}{'MaxDD':>9}{'Trades':>8}")
+    print("-" * 58)
+    for fast, slow, total, sharpe, max_dd, n_trades in rows:
+        print(f"  {fast:>6}{slow:>6}{total:>10.1%}{sharpe:>9.2f}{max_dd:>9.1%}{n_trades:>8}")
+    print("-" * 58)
+    print(f"  {'Buy & Hold':>12}{base[0]:>10.1%}{base[1]:>9.2f}{base[2]:>9.1%}{'—':>8}")
+    print("=" * 58)
+
+    best = rows[0]
+    print(f"\n  Best combo: {best[0]}/{best[1]}-day  ->  {best[2]:.1%} return")
+    if best[2] > base[0]:
+        print("  The best combo beat buy-and-hold here, but that doesn't mean it will next time.")
+    else:
+        print("  Even the best combo didn't beat buy-and-hold here.")
+
+    save_sweep_heatmap(rows, fast_list, slow_list, ticker)
+
+
+def save_sweep_heatmap(rows, fast_list, slow_list, ticker):
+    """Draw a grid of returns: one cell per fast/slow combo, greener = better."""
+    # Build a grid (rows = fast windows, cols = slow windows).
+    lookup = {(fast, slow): total for fast, slow, total, *_ in rows}
+    grid = np.full((len(fast_list), len(slow_list)), np.nan)
+    for i, fast in enumerate(fast_list):
+        for j, slow in enumerate(slow_list):
+            if (fast, slow) in lookup:
+                grid[i, j] = lookup[(fast, slow)] * 100  # as a percent
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(grid, cmap="RdYlGn", aspect="auto")
+
+    ax.set_xticks(range(len(slow_list)), labels=slow_list)
+    ax.set_yticks(range(len(fast_list)), labels=fast_list)
+    ax.set_xlabel("Slow MA (days)")
+    ax.set_ylabel("Fast MA (days)")
+    ax.set_title(f"{ticker}: total return by parameter combo (%)")
+
+    # Write the return number inside each cell.
+    for i in range(len(fast_list)):
+        for j in range(len(slow_list)):
+            if not np.isnan(grid[i, j]):
+                ax.text(j, i, f"{grid[i, j]:.0f}%", ha="center", va="center", fontsize=10)
+
+    fig.colorbar(im, ax=ax, label="Total return (%)")
+    plt.tight_layout()
+    plt.savefig("sweep.png", dpi=120)
+    print("\nHeatmap saved to sweep.png")
 
 
 def main():
@@ -117,54 +292,15 @@ def main():
     args = parser.parse_args()
 
     print(f"Downloading {args.ticker} from {args.start} to {args.end}...")
-    data = get_prices(args.ticker, args.start, args.end)
+    prices = get_prices(args.ticker, args.start, args.end)
 
-    data, n_trades = run_backtest(data, args.short, args.long, args.cost)
+    if MODE == "sweep":
+        run_sweep(prices, SWEEP_FAST, SWEEP_SLOW, args.cost, args.ticker)
+        return
 
-    strat = summarize(data["strat_equity"], data["strat_ret"])
-    hold = summarize(data["hold_equity"], data["mkt_ret"])
-
-    print("\n" + "=" * 52)
-    print(f"  Results for {args.ticker}  ({args.short}/{args.long}-day crossover)")
-    print("=" * 52)
-    print(f"  {'':14}{'Strategy':>12}{'Buy & Hold':>14}")
-    print(f"  {'Total return':14}{strat[0]:>11.1%}{hold[0]:>14.1%}")
-    print(f"  {'Sharpe ratio':14}{strat[1]:>11.2f}{hold[1]:>14.2f}")
-    print(f"  {'Max drawdown':14}{strat[2]:>11.1%}{hold[2]:>14.1%}")
-    print(f"  {'Trades made':14}{n_trades:>11}")
-    print("=" * 52)
-
-    # Plot 1: Strategy chart with moving averages and buy/sell points.
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    
-    # Top plot: Price and moving averages.
-    ax1.plot(data.index, data["Close"], label="Price", linewidth=1.5, alpha=0.7, color="gray")
-    ax1.plot(data.index, data["ma_short"], label=f"Short MA ({args.short}d)", linewidth=1.8, color="blue")
-    ax1.plot(data.index, data["ma_long"], label=f"Long MA ({args.long}d)", linewidth=1.8, color="orange")
-    
-    # Mark the buy and sell points (where position changes).
-    trades = data["position"].diff().fillna(0)
-    buys = data.index[trades == 1]
-    sells = data.index[trades == -1]
-    ax1.scatter(buys, data.loc[buys, "Close"], marker="^", color="green", s=100, label="Buy", zorder=5)
-    ax1.scatter(sells, data.loc[sells, "Close"], marker="v", color="red", s=100, label="Sell", zorder=5)
-    
-    ax1.set_ylabel("Price ($)")
-    ax1.set_title(f"{args.ticker}: Moving Average Crossover Strategy ({args.short}/{args.long}-day)")
-    ax1.legend(loc="upper left", fontsize=9)
-    ax1.grid(alpha=0.3)
-    
-    # Bottom plot: Account equity over time.
-    ax2.plot(data.index, data["strat_equity"], label="Strategy", linewidth=1.8, color="blue")
-    ax2.plot(data.index, data["hold_equity"], label="Buy & Hold", linewidth=1.8, alpha=0.7, color="gray")
-    ax2.set_ylabel("Account value (started at $1)")
-    ax2.set_xlabel("Date")
-    ax2.legend(loc="upper left", fontsize=9)
-    ax2.grid(alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig("results.png", dpi=120)
-    print("\nChart saved to results.png (2 panels: strategy trades + equity curves)")
+    data, n_trades = run_backtest(prices, args.short, args.long, args.cost)
+    print_single_result(args.ticker, args.short, args.long, data, n_trades, args.cost)
+    save_chart(args.ticker, args.short, args.long, data)
 
 
 if __name__ == "__main__":
