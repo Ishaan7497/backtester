@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Output files
+results.png
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
