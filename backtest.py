@@ -49,7 +49,7 @@ TAKE_PROFIT_PCT = 0.10     # exit if up 10% from entry (0.10 = 10%), or 0 to dis
 #   "single"       -> test one FAST_MA / SLOW_MA combo (and draw the chart)
 #   "sweep"        -> test many combos below, rank them, and draw a heatmap
 #   "multi_stock"  -> test the same params across many tickers below
-MODE = "sweep"
+MODE = "multi_stock"
 SWEEP_FAST = [5, 10, 20, 50]      # fast windows to try in sweep mode
 SWEEP_SLOW = [50, 100, 150, 200]  # slow windows to try in sweep mode
 
@@ -191,25 +191,40 @@ def summarize(equity, returns):
     return total_return, sharpe, max_drawdown
 
 
-def print_single_result(ticker, fast, slow, data, n_trades, cost):
+def settings_header(title, start, end, cost, stop_loss, take_profit, width):
+    """Print a header showing exactly what settings produced the results below."""
+    sl = f"{stop_loss * 100:.0f}%" if stop_loss > 0 else "off"
+    tp = f"{take_profit * 100:.0f}%" if take_profit > 0 else "off"
+    print("\n" + "=" * width)
+    print(f"  {title}")
+    print(f"  {start} to {end}  |  cost {cost * 100:.2f}%  "
+          f"|  stop-loss {sl}  |  take-profit {tp}")
+    print("=" * width)
+
+
+def print_single_result(ticker, fast, slow, data, n_trades, cost,
+                        start, end, stop_loss, take_profit):
     """Print the summary table for one backtest."""
     strat = summarize(data["strat_equity"], data["strat_ret"])
     hold = summarize(data["hold_equity"], data["mkt_ret"])
     wins, losses = trade_breakdown(data, cost)
     round_trips = wins + losses
     win_rate = wins / round_trips if round_trips else 0
+    beat = strat[0] - hold[0]
 
-    print("\n" + "=" * 52)
-    print(f"  Results for {ticker}  ({fast}/{slow}-day crossover)")
-    print("=" * 52)
-    print(f"  {'':14}{'Strategy':>12}{'Buy & Hold':>14}")
-    print(f"  {'Total return':14}{strat[0]:>11.1%}{hold[0]:>14.1%}")
-    print(f"  {'Sharpe ratio':14}{strat[1]:>11.2f}{hold[1]:>14.2f}")
-    print(f"  {'Max drawdown':14}{strat[2]:>11.1%}{hold[2]:>14.1%}")
-    print(f"  {'Trades made':14}{n_trades:>11}")
+    settings_header(f"{ticker}  —  {fast}/{slow}-day crossover",
+                    start, end, cost, stop_loss, take_profit, 52)
+    print(f"  {'':16}{'Strategy':>11}{'Buy & Hold':>13}")
+    print(f"  {'Total return':16}{strat[0]:>10.1%}{hold[0]:>13.1%}")
+    print(f"  {'Sharpe ratio':16}{strat[1]:>10.2f}{hold[1]:>13.2f}")
+    print(f"  {'Max drawdown':16}{strat[2]:>10.1%}{hold[2]:>13.1%}")
+    print(f"  {'Trades':16}{n_trades:>10}")
+    print(f"  {'Win rate':16}{win_rate:>10.0%}    ({wins} W / {losses} L)")
     print("-" * 52)
-    print(f"  Completed round-trips: {round_trips}   "
-          f"wins: {wins}   losses: {losses}   win rate: {win_rate:.0%}")
+    if beat > 0:
+        print(f"  Strategy BEAT buy & hold by {beat:+.1%}")
+    else:
+        print(f"  Strategy lost to buy & hold by {beat:.1%}")
     print("=" * 52)
 
 
@@ -249,47 +264,52 @@ def save_chart(ticker, fast, slow, data):
 def run_multi_stock(tickers, fast, slow, start, end, cost, stop_loss, take_profit):
     """Test the same strategy on multiple stocks and rank by return."""
     rows = []
-    
+
     for ticker in tickers:
         try:
             prices = get_prices(ticker, start, end)
         except SystemExit:
             print(f"  {ticker:>6} — no data")
             continue
-        
+
         data, n_trades = run_backtest(prices, fast, slow, cost, stop_loss, take_profit)
         strat = summarize(data["strat_equity"], data["strat_ret"])
         hold = summarize(data["hold_equity"], data["mkt_ret"])
         wins, losses = trade_breakdown(data, cost)
         win_rate = wins / (wins + losses) if (wins + losses) else 0
-        
+
         rows.append((ticker, strat[0], hold[0], strat[1], strat[2], n_trades, win_rate))
-    
+
     rows.sort(key=lambda r: r[1], reverse=True)  # rank by strategy return
-    
-    print("\n" + "=" * 75)
-    print(f"  Multi-stock test  ({fast}/{slow}-day MA, stop={stop_loss*100:.0f}%, "
-          f"profit={take_profit*100:.0f}%)")
-    print("=" * 75)
-    print(f"  {'Ticker':>8}{'Strategy':>12}{'Buy&Hold':>12}{'Sharpe':>9}"
-          f"{'MaxDD':>9}{'Trades':>8}{'Win%':>7}")
-    print("-" * 75)
+
+    W = 74
+    settings_header(f"Multi-stock test  —  {fast}/{slow}-day crossover",
+                    start, end, cost, stop_loss, take_profit, W)
+    print(f"  {'Ticker':>7}{'Strategy':>11}{'Buy&Hold':>11}{'vs B&H':>10}"
+          f"{'Sharpe':>8}{'MaxDD':>9}{'Win%':>7}")
+    print("-" * W)
+    beat_count = 0
     for ticker, strat_ret, hold_ret, sharpe, max_dd, n_trades, win_rate in rows:
-        print(f"  {ticker:>8}{strat_ret:>11.1%}{hold_ret:>12.1%}{sharpe:>9.2f}"
-              f"{max_dd:>9.1%}{n_trades:>8}{win_rate:>6.0%}")
-    print("=" * 75)
-    
-    if rows:
-        best = rows[0]
-        print(f"\n  Best: {best[0]} with {best[1]:.1%} return")
-        if best[1] > best[2]:
-            print(f"  (beat buy-and-hold by {(best[1]-best[2])*100:.1f} percentage points)")
-        else:
-            print(f"  (buy-and-hold would have returned {best[2]:.1%})")
+        diff = strat_ret - hold_ret
+        mark = " *" if diff > 0 else "  "
+        if diff > 0:
+            beat_count += 1
+        print(f"  {ticker:>7}{strat_ret:>11.1%}{hold_ret:>11.1%}{diff:>+9.1%}{mark}"
+              f"{sharpe:>7.2f}{max_dd:>9.1%}{win_rate:>7.0%}")
+    print("-" * W)
+    print(f"  ( * = beat buy & hold )")
+    print("=" * W)
+
+    print(f"\n  {beat_count} of {len(rows)} stocks beat buy & hold with this strategy.")
+    if beat_count == len(rows) and rows:
+        print("  It worked on every stock — that's a sign of something real, not luck.")
+    elif beat_count <= 1:
+        print("  It only worked on one (or none) — likely stock-specific luck.")
 
 
 
-def run_sweep(prices, fast_list, slow_list, cost, ticker, stop_loss, take_profit):
+def run_sweep(prices, fast_list, slow_list, cost, ticker, stop_loss, take_profit,
+              start, end):
     """Test many fast/slow combos, print a ranked table, and draw a heatmap."""
     rows = []
     for fast in fast_list:
@@ -306,23 +326,31 @@ def run_sweep(prices, fast_list, slow_list, cost, ticker, stop_loss, take_profit
     mkt_ret = prices["Close"].pct_change().fillna(0)
     base = summarize((1 + mkt_ret).cumprod(), mkt_ret)
 
-    print("\n" + "=" * 58)
-    print(f"  Parameter sweep for {ticker}")
-    print("=" * 58)
-    print(f"  {'Fast':>6}{'Slow':>6}{'Return':>10}{'Sharpe':>9}{'MaxDD':>9}{'Trades':>8}")
-    print("-" * 58)
+    W = 70
+    settings_header(f"Parameter sweep  —  {ticker}",
+                    start, end, cost, stop_loss, take_profit, W)
+    print(f"  {'Fast':>5}{'Slow':>6}{'Return':>11}{'Sharpe':>8}"
+          f"{'MaxDD':>9}{'Trades':>8}{'vs B&H':>13}")
+    print("-" * W)
+    beat_count = 0
     for fast, slow, total, sharpe, max_dd, n_trades in rows:
-        print(f"  {fast:>6}{slow:>6}{total:>10.1%}{sharpe:>9.2f}{max_dd:>9.1%}{n_trades:>8}")
-    print("-" * 58)
-    print(f"  {'Buy & Hold':>12}{base[0]:>10.1%}{base[1]:>9.2f}{base[2]:>9.1%}{'—':>8}")
-    print("=" * 58)
+        diff = total - base[0]
+        if diff > 0:
+            beat_count += 1
+        print(f"  {fast:>5}{slow:>6}{total:>11.1%}{sharpe:>8.2f}"
+              f"{max_dd:>9.1%}{n_trades:>8}{diff:>+12.1%} ")
+    print("-" * W)
+    print(f"  {'Buy & Hold':>11}{base[0]:>11.1%}{base[1]:>8.2f}"
+          f"{base[2]:>9.1%}{'—':>8}{'baseline':>13}")
+    print("=" * W)
 
     best = rows[0]
-    print(f"\n  Best combo: {best[0]}/{best[1]}-day  ->  {best[2]:.1%} return")
-    if best[2] > base[0]:
-        print("  It beat buy-and-hold here.")
-    else:
-        print("  Even the best combo didn't beat buy-and-hold here.")
+    print(f"\n  Best combo: {best[0]}/{best[1]}-day  ->  {best[2]:.1%} return "
+          f"({best[2] - base[0]:+.1%} vs buy & hold)")
+    print(f"  {beat_count} of {len(rows)} combos beat buy & hold.")
+    if beat_count <= 1:
+        print("  Only one (or none) beating it is a warning sign — likely luck, not edge.")
+    print("  Check sweep.png: a green CLUSTER is trustworthy, one lone green cell isn't.")
 
     save_sweep_heatmap(rows, fast_list, slow_list, ticker)
 
@@ -384,13 +412,14 @@ def main():
 
     if MODE == "sweep":
         run_sweep(prices, SWEEP_FAST, SWEEP_SLOW, args.cost, args.ticker,
-                  STOP_LOSS_PCT, TAKE_PROFIT_PCT)
+                  STOP_LOSS_PCT, TAKE_PROFIT_PCT, args.start, args.end)
         return
 
     # Single mode
     data, n_trades = run_backtest(prices, args.short, args.long, args.cost,
                                   STOP_LOSS_PCT, TAKE_PROFIT_PCT)
-    print_single_result(args.ticker, args.short, args.long, data, n_trades, args.cost)
+    print_single_result(args.ticker, args.short, args.long, data, n_trades, args.cost,
+                        args.start, args.end, STOP_LOSS_PCT, TAKE_PROFIT_PCT)
     save_chart(args.ticker, args.short, args.long, data)
 
 
