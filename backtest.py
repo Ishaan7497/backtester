@@ -31,10 +31,10 @@ import matplotlib.pyplot as plt
 #   SETTINGS  --  edit these, then just run the file
 # ============================================================
 
-TICKER = "MSFT"            # the stock symbol, e.g. "AAPL", "NVDA", "XOM"
+TICKER = "TSLA"            # the stock symbol, e.g. "AAPL", "NVDA", "XOM"
 
-START_DATE = "2019-01-01"  # when to start testing (YYYY-MM-DD)
-END_DATE = "2024-01-01"    # when to stop testing  (YYYY-MM-DD)
+START_DATE = "2023-01-01"  # when to start testing (YYYY-MM-DD)
+END_DATE = "2026-01-01"    # when to stop testing  (YYYY-MM-DD)
 
 FAST_MA = 20               # fast (short) moving average, in days
 SLOW_MA = 50               # slow (long) moving average, in days
@@ -49,12 +49,12 @@ TAKE_PROFIT_PCT = 0.10     # exit if up 10% from entry (0.10 = 10%), or 0 to dis
 #   "single"       -> test one FAST_MA / SLOW_MA combo (and draw the chart)
 #   "sweep"        -> test many combos below, rank them, and draw a heatmap
 #   "multi_stock"  -> test the same params across many tickers below
-MODE = "multi_stock"
+MODE = "sweep"
 SWEEP_FAST = [5, 10, 20, 50]      # fast windows to try in sweep mode
 SWEEP_SLOW = [50, 100, 150, 200]  # slow windows to try in sweep mode
 
 # For multi_stock mode: test the strategy on these tickers
-TICKERS_TO_TEST = ["MSFT", "NVDA", "TSLA", "AAPL"]
+TICKERS_TO_TEST = [ "MSFT", "NVDA", "TSLA", "AAPL"]
 
 # ============================================================
 #   (you don't need to touch anything below this line)
