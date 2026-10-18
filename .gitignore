@@ -6,8 +6,11 @@ venv/
 
 # Output files
 results.png
+sweep.png
 
 # OS / editor
 .DS_Store
 .vscode/
 .idea/
+.Rhistory
+.pytest_cache/
