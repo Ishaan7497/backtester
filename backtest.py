@@ -93,20 +93,23 @@ def run_backtest(data, short_window, long_window, cost_per_trade,
     target = signal.shift(1).fillna(0)
 
     # 3) Apply stop-loss and take-profit on top of the MA signal.
-    #    Track entry price and exit if stop or profit is hit.
+    #    position[i] is what we hold DURING day i (yesterday's close -> today's
+    #    close), so it may only use prices up to yesterday's close. Using
+    #    today's close here would let a stop-loss "see" a drop and dodge it.
+    close = data["Close"].values
     position = np.zeros(len(data))
     entry_price = None
-    
-    for i in range(len(data)):
-        current_price = data["Close"].iloc[i]
-        
+
+    for i in range(1, len(data)):
+        last_close = close[i - 1]
+
         if position[i-1] == 0 and target.iloc[i] == 1:
-            # Entering the market.
+            # Entering the market at yesterday's close.
             position[i] = 1
-            entry_price = current_price
+            entry_price = last_close
         elif position[i-1] == 1:
             # Already in the market — check stop/profit before checking MA signal.
-            price_change = (current_price - entry_price) / entry_price
+            price_change = (last_close - entry_price) / entry_price
             
             hit_stop = stop_loss_pct > 0 and price_change <= -stop_loss_pct
             hit_profit = take_profit_pct > 0 and price_change >= take_profit_pct
@@ -160,14 +163,15 @@ def trade_breakdown(data, cost_per_trade):
     results = []
     entry_price = None
 
+    # A position that starts (or ends) on day i was traded at day i-1's close.
     for i in range(1, len(position)):
         bought = position[i] > 0 and position[i - 1] == 0
         sold = position[i] == 0 and position[i - 1] > 0
 
         if bought:
-            entry_price = price[i]
+            entry_price = price[i - 1]
         elif sold and entry_price is not None:
-            net = price[i] / entry_price - 1 - 2 * cost_per_trade
+            net = price[i - 1] / entry_price - 1 - 2 * cost_per_trade
             results.append(net)
             entry_price = None
 
@@ -236,9 +240,9 @@ def save_chart(ticker, fast, slow, data):
     ax1.plot(data.index, data["ma_short"], label=f"Short MA ({fast}d)", linewidth=1.8, color="blue")
     ax1.plot(data.index, data["ma_long"], label=f"Long MA ({slow}d)", linewidth=1.8, color="orange")
 
-    # Buy/sell marks = days we moved into or out of the market.
+    # Buy/sell marks = the closes we traded at (the day before the position changed).
     in_market = (data["position"] > 0).astype(int)
-    moves = in_market.diff().fillna(0)
+    moves = in_market.diff().shift(-1).fillna(0)
     buys = data.index[moves == 1]
     sells = data.index[moves == -1]
     ax1.scatter(buys, data.loc[buys, "Close"], marker="^", color="green", s=100, label="Buy", zorder=5)
