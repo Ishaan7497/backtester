@@ -16,6 +16,7 @@ Run it:
 
   Or override any setting from the command line:
   python backtest.py --ticker NVDA --short 10 --long 30
+  python backtest.py --mode sweep --stop-loss 0.05
 
 Nothing here is investment advice. It's a learning tool.
 """
@@ -324,6 +325,10 @@ def run_sweep(prices, fast_list, slow_list, cost, ticker, stop_loss, take_profit
             total, sharpe, max_dd = summarize(d["strat_equity"], d["strat_ret"])
             rows.append((fast, slow, total, sharpe, max_dd, n_trades))
 
+    if not rows:
+        print("\nNo valid combos to test: every fast window is >= every slow window.")
+        return
+
     rows.sort(key=lambda r: r[2], reverse=True)  # best total return first
 
     # Buy & hold baseline (same for every combo).
@@ -394,7 +399,24 @@ def save_sweep_heatmap(rows, fast_list, slow_list, ticker):
     print("\nHeatmap saved to sweep.png")
 
 
-def main():
+MODES = ("single", "sweep", "multi_stock")
+
+
+def check_settings(parser, args):
+    """Reject settings that would crash or give meaningless results."""
+    if args.mode not in MODES:
+        parser.error(f"mode must be one of {', '.join(MODES)} (got {args.mode!r})")
+    if args.short < 1 or args.long < 1:
+        parser.error("moving-average windows must be at least 1 day")
+    if args.short >= args.long:
+        parser.error(f"the short window ({args.short}) must be shorter than the long window ({args.long})")
+    if args.cost < 0 or args.stop_loss < 0 or args.take_profit < 0:
+        parser.error("cost, stop-loss and take-profit can't be negative")
+    if args.start >= args.end:
+        parser.error(f"start date ({args.start}) must be before end date ({args.end})")
+
+
+def main(argv=None):
     # Defaults come from the SETTINGS block at the top of this file.
     # The command-line flags below are optional and only override those.
     parser = argparse.ArgumentParser(description="Tiny moving-average backtester.")
@@ -404,26 +426,35 @@ def main():
     parser.add_argument("--short", type=int, default=FAST_MA, help="Short MA window (days)")
     parser.add_argument("--long", type=int, default=SLOW_MA, help="Long MA window (days)")
     parser.add_argument("--cost", type=float, default=COST_PER_TRADE, help="Cost per trade")
-    args = parser.parse_args()
+    parser.add_argument("--stop-loss", type=float, default=STOP_LOSS_PCT,
+                        help="Exit if down this fraction from entry (0 = off)")
+    parser.add_argument("--take-profit", type=float, default=TAKE_PROFIT_PCT,
+                        help="Exit if up this fraction from entry (0 = off)")
+    parser.add_argument("--mode", default=MODE, help="single, sweep or multi_stock")
+    args = parser.parse_args(argv)
+    check_settings(parser, args)
 
-    if MODE == "multi_stock":
+    if args.mode == "multi_stock":
         run_multi_stock(TICKERS_TO_TEST, args.short, args.long, args.start, args.end,
-                        args.cost, STOP_LOSS_PCT, TAKE_PROFIT_PCT)
+                        args.cost, args.stop_loss, args.take_profit)
         return
 
     print(f"Downloading {args.ticker} from {args.start} to {args.end}...")
     prices = get_prices(args.ticker, args.start, args.end)
 
-    if MODE == "sweep":
+    if args.mode == "sweep":
         run_sweep(prices, SWEEP_FAST, SWEEP_SLOW, args.cost, args.ticker,
-                  STOP_LOSS_PCT, TAKE_PROFIT_PCT, args.start, args.end)
+                  args.stop_loss, args.take_profit, args.start, args.end)
         return
 
     # Single mode
+    if len(prices) <= args.long:
+        print(f"Warning: only {len(prices)} days of prices, but the long average needs "
+              f"{args.long}. The strategy will never trade.")
     data, n_trades = run_backtest(prices, args.short, args.long, args.cost,
-                                  STOP_LOSS_PCT, TAKE_PROFIT_PCT)
+                                  args.stop_loss, args.take_profit)
     print_single_result(args.ticker, args.short, args.long, data, n_trades, args.cost,
-                        args.start, args.end, STOP_LOSS_PCT, TAKE_PROFIT_PCT)
+                        args.start, args.end, args.stop_loss, args.take_profit)
     save_chart(args.ticker, args.short, args.long, data)
 
 
