@@ -32,6 +32,8 @@ let a stop-loss "see" a drop and dodge it. On MSFT 2019–2024 that bug turned a
 46% return into an apparent 129%. The test suite now rewrites future prices and
 checks that no earlier trading decision changes.
 
+## Why I built this
+
 ## Setup
 
     pip install -r requirements.txt
