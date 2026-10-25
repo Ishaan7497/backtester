@@ -372,13 +372,16 @@ def run_sweep(prices, fast_list, slow_list, cost, ticker, stop_loss, take_profit
         print("  Only one (or none) beating it is a warning sign — likely luck, not edge.")
     print("  Check sweep.png: a green CLUSTER is trustworthy, one lone green cell isn't.")
 
-    return save_sweep_heatmap(rows, fast_list, slow_list, ticker)
+    return save_sweep_heatmap(rows, fast_list, slow_list, ticker, base[0])
 
 
 
 
-def save_sweep_heatmap(rows, fast_list, slow_list, ticker):
-    """Draw a grid of returns: one cell per fast/slow combo, greener = better."""
+def save_sweep_heatmap(rows, fast_list, slow_list, ticker, hold_return):
+    """Draw a grid of returns: one cell per fast/slow combo.
+
+    Colors are centered on buy & hold: green cells beat it, red cells lost to it.
+    """
     plt.close("all")  # clear any previous figures to avoid carryover
     
     # Build a grid (rows = fast windows, cols = slow windows).
@@ -389,14 +392,19 @@ def save_sweep_heatmap(rows, fast_list, slow_list, ticker):
             if (fast, slow) in lookup:
                 grid[i, j] = lookup[(fast, slow)] * 100  # as a percent
 
+    # Center the colors on buy & hold so "green" always means "beat buy & hold".
+    hold_pct = hold_return * 100
+    spread = np.nanmax(np.abs(grid - hold_pct)) or 1
     fig, ax = plt.subplots(figsize=(8, 6))
-    im = ax.imshow(grid, cmap="RdYlGn", aspect="auto")
+    im = ax.imshow(grid, cmap="RdYlGn", aspect="auto",
+                   vmin=hold_pct - spread, vmax=hold_pct + spread)
 
     ax.set_xticks(range(len(slow_list)), labels=slow_list)
     ax.set_yticks(range(len(fast_list)), labels=fast_list)
     ax.set_xlabel("Slow MA (days)")
     ax.set_ylabel("Fast MA (days)")
-    ax.set_title(f"{ticker}: total return by parameter combo (%)")
+    ax.set_title(f"{ticker}: total return by parameter combo (%)\n"
+                 f"green = beat buy & hold ({hold_pct:.0f}%), red = lost to it")
 
     # Write the return number inside each cell.
     for i in range(len(fast_list)):
@@ -404,7 +412,8 @@ def save_sweep_heatmap(rows, fast_list, slow_list, ticker):
             if not np.isnan(grid[i, j]):
                 ax.text(j, i, f"{grid[i, j]:.0f}%", ha="center", va="center", fontsize=10)
 
-    fig.colorbar(im, ax=ax, label="Total return (%)")
+    cbar = fig.colorbar(im, ax=ax, label="Total return (%)")
+    cbar.ax.axhline(hold_pct, color="black", linewidth=1.5)
     plt.tight_layout()
     path = os.path.join(OUTPUT_DIR, "sweep.png")
     plt.savefig(path, dpi=120)
