@@ -1,4 +1,4 @@
-# 📈 mini-backtester
+# 📈 BACKTESTER
 
 **A beginner-friendly stock backtester: test a moving-average crossover strategy on real prices and see if it beats buy-and-hold.**
 
