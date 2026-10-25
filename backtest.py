@@ -22,20 +22,26 @@ Nothing here is investment advice. It's a learning tool.
 """
 
 import argparse
+import os
+import subprocess
+import sys
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
+
+# Charts are always saved next to this script, no matter which folder you run it from.
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # ============================================================
 #   SETTINGS  --  edit these, then just run the file
 # ============================================================
 
-TICKER = "TSLA"            # the stock symbol, e.g. "AAPL", "NVDA", "XOM"
+TICKER = "META"            # the stock symbol, e.g. "AAPL", "NVDA", "XOM"
 
-START_DATE = "2023-01-01"  # when to start testing (YYYY-MM-DD)
-END_DATE = "2026-01-01"    # when to stop testing  (YYYY-MM-DD)
+START_DATE = "2021-01-01"  # when to start testing (YYYY-MM-DD)
+END_DATE = "2023-01-01"    # when to stop testing  (YYYY-MM-DD)
 
 FAST_MA = 20               # fast (short) moving average, in days
 SLOW_MA = 50               # slow (long) moving average, in days
@@ -56,6 +62,9 @@ SWEEP_SLOW = [50, 100, 150, 200]  # slow windows to try in sweep mode
 
 # For multi_stock mode: test the strategy on these tickers
 TICKERS_TO_TEST = [ "MSFT", "NVDA", "TSLA", "AAPL"]
+
+# Open the chart (results.png or sweep.png) automatically once the run finishes.
+OPEN_CHARTS = True
 
 # ============================================================
 #   (you don't need to touch anything below this line)
@@ -262,8 +271,10 @@ def save_chart(ticker, fast, slow, data):
     ax2.grid(alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig("results.png", dpi=120)
-    print("\nChart saved to results.png (2 panels: strategy trades + equity curves)")
+    path = os.path.join(OUTPUT_DIR, "results.png")
+    plt.savefig(path, dpi=120)
+    print(f"\nChart saved to {path} (2 panels: strategy trades + equity curves)")
+    return path
 
 
 def run_multi_stock(tickers, fast, slow, start, end, cost, stop_loss, take_profit):
@@ -361,7 +372,7 @@ def run_sweep(prices, fast_list, slow_list, cost, ticker, stop_loss, take_profit
         print("  Only one (or none) beating it is a warning sign — likely luck, not edge.")
     print("  Check sweep.png: a green CLUSTER is trustworthy, one lone green cell isn't.")
 
-    save_sweep_heatmap(rows, fast_list, slow_list, ticker)
+    return save_sweep_heatmap(rows, fast_list, slow_list, ticker)
 
 
 
@@ -395,8 +406,23 @@ def save_sweep_heatmap(rows, fast_list, slow_list, ticker):
 
     fig.colorbar(im, ax=ax, label="Total return (%)")
     plt.tight_layout()
-    plt.savefig("sweep.png", dpi=120)
-    print("\nHeatmap saved to sweep.png")
+    path = os.path.join(OUTPUT_DIR, "sweep.png")
+    plt.savefig(path, dpi=120)
+    print(f"\nHeatmap saved to {path}")
+    return path
+
+
+def open_file(path):
+    """Open a saved chart in the computer's default image viewer."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", path], check=False)
+        elif sys.platform.startswith("win"):
+            os.startfile(path)
+        else:
+            subprocess.run(["xdg-open", path], check=False)
+    except OSError:
+        print(f"(Couldn't open {path} automatically — open it by hand.)")
 
 
 MODES = ("single", "sweep", "multi_stock")
@@ -431,6 +457,8 @@ def main(argv=None):
     parser.add_argument("--take-profit", type=float, default=TAKE_PROFIT_PCT,
                         help="Exit if up this fraction from entry (0 = off)")
     parser.add_argument("--mode", default=MODE, help="single, sweep or multi_stock")
+    parser.add_argument("--no-open", dest="open_charts", action="store_false",
+                        default=OPEN_CHARTS, help="Don't open the chart when done")
     args = parser.parse_args(argv)
     check_settings(parser, args)
 
@@ -443,8 +471,10 @@ def main(argv=None):
     prices = get_prices(args.ticker, args.start, args.end)
 
     if args.mode == "sweep":
-        run_sweep(prices, SWEEP_FAST, SWEEP_SLOW, args.cost, args.ticker,
-                  args.stop_loss, args.take_profit, args.start, args.end)
+        path = run_sweep(prices, SWEEP_FAST, SWEEP_SLOW, args.cost, args.ticker,
+                         args.stop_loss, args.take_profit, args.start, args.end)
+        if path and args.open_charts:
+            open_file(path)
         return
 
     # Single mode
@@ -455,7 +485,9 @@ def main(argv=None):
                                   args.stop_loss, args.take_profit)
     print_single_result(args.ticker, args.short, args.long, data, n_trades, args.cost,
                         args.start, args.end, args.stop_loss, args.take_profit)
-    save_chart(args.ticker, args.short, args.long, data)
+    path = save_chart(args.ticker, args.short, args.long, data)
+    if args.open_charts:
+        open_file(path)
 
 
 

@@ -156,8 +156,18 @@ def test_two_level_columns_are_flattened(monkeypatch):
 @pytest.fixture
 def offline(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bt, "OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(bt, "get_prices", lambda t, s, e: random_walk(seed=len(t)))
+    monkeypatch.setattr(bt, "open_file", lambda path: None)
     return tmp_path
+
+
+@pytest.fixture
+def opened(offline, monkeypatch):
+    """Records the charts main() would have opened, instead of opening them."""
+    paths = []
+    monkeypatch.setattr(bt, "open_file", paths.append)
+    return paths
 
 
 @pytest.mark.parametrize("args", [
@@ -175,18 +185,25 @@ def test_bad_settings_are_rejected(offline, args, capsys):
     assert "error:" in capsys.readouterr().err
 
 
-def test_single_mode_prints_results_and_saves_chart(offline, capsys):
+def test_single_mode_prints_results_and_saves_chart(offline, opened, capsys):
     bt.main(["--mode", "single", "--short", "10", "--long", "30"])
     out = capsys.readouterr().out
     assert "Total return" in out and "Win rate" in out
     assert (offline / "results.png").exists()
+    assert opened == [str(offline / "results.png")]
 
 
-def test_sweep_mode_ranks_combos_and_saves_heatmap(offline, capsys):
+def test_sweep_mode_ranks_combos_and_saves_heatmap(offline, opened, capsys):
     bt.main(["--mode", "sweep"])
     out = capsys.readouterr().out
     assert "Parameter sweep" in out and "Best combo" in out
     assert (offline / "sweep.png").exists()
+    assert opened == [str(offline / "sweep.png")]
+
+
+def test_no_open_flag_skips_opening_chart(opened):
+    bt.main(["--mode", "sweep", "--no-open"])
+    assert opened == []
 
 
 def test_sweep_with_no_valid_combos(offline, capsys):
