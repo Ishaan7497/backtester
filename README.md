@@ -1,6 +1,6 @@
 <div align="center">
 
-# 📈 BACKTESTER
+# BACKTESTER
 
 **Does a simple trading strategy beat just buying and holding a stock?**<br>
 A beginner-friendly Python backtester that tests a moving-average crossover on real prices, honestly.
@@ -46,17 +46,17 @@ checks that no earlier trading decision changes.
 
 ## Contents
 
-- [Where it works best](#-where-it-works-best)
-- [Deep dive: META 2021–2023](#-deep-dive-meta-20212023)
-- [Where it doesn't work](#-where-it-doesnt-work)
+- [Where it works best](#where-it-works-best)
+- [Deep dive: META 2021–2023](#deep-dive-meta-20212023)
+- [Where it doesn't work](#where-it-doesnt-work)
 - [Why I built this](#why-i-built-this)
-- [Quick start](#-quick-start)
-- [Settings](#-settings)
-- [The three modes](#-the-three-modes)
-- [What the terms mean](#-what-the-terms-mean)
-- [Testing](#-testing)
+- [Quick start](#quick-start)
+- [Settings](#settings)
+- [The three modes](#the-three-modes)
+- [What the terms mean](#what-the-terms-mean)
+- [Testing](#testing)
 
-## 🏆 Where it works best
+## Where it works best
 
 The strongest results from the 1,331-window search. To make the list, a result
 had to pass three checks:
@@ -87,7 +87,7 @@ Reproduce any row (dates run 1 January to 31 December):
     python backtest.py --ticker SNAP --start 2020-01-01 --end 2022-12-31 --short 20 --long 50 --stop-loss 0 --take-profit 0 --mode single
     python backtest.py --ticker SNAP --start 2020-01-01 --end 2022-12-31 --stop-loss 0 --take-profit 0 --mode sweep
 
-## 🔍 Deep dive: META 2021–2023
+## Deep dive: META 2021–2023
 
     python backtest.py --ticker META --start 2021-01-01 --end 2023-12-31 --short 20 --long 50 --stop-loss 0 --take-profit 0 --mode single
 
@@ -114,7 +114,7 @@ from +54% to +180%:
 
 ![Sweep on META, 2021–2023: all 15 combos beat buy-and-hold](docs/example_sweep.png)
 
-## 📉 Where it doesn't work
+## Where it doesn't work
 
 Same stock, different market. From January 2023 to October 2026 META climbed
 steadily, returning +474%. Not one of the 15 combinations came close; the best
@@ -131,7 +131,7 @@ of the 1,331 windows had all 15 settings ahead with a positive return.
 
 ## Why I built this
 
-## 🚀 Quick start
+## Quick start
 
     pip install -r requirements.txt
     python backtest.py
@@ -148,7 +148,7 @@ Settings that don't make sense (a short window that isn't shorter than the long
 one, negative fees, a start date after the end date, an unknown mode) are
 rejected with a clear message.
 
-## 🔧 Settings
+## Settings
 
 <details>
 <summary>All settings in <code>backtest.py</code></summary>
@@ -171,7 +171,7 @@ rejected with a clear message.
 
 </details>
 
-## 🧭 The three modes
+## The three modes
 
 **Single mode** prints a results summary in the terminal and saves (and opens)
 `results.png`: a two-panel chart showing the price with both moving averages
@@ -187,7 +187,7 @@ green cell is more likely luck.
 `TICKERS_TO_TEST` and ranks them, to check whether a result holds up beyond one
 stock.
 
-## 📖 What the terms mean
+## What the terms mean
 
 <details>
 <summary>Moving averages, Sharpe ratio, drawdown and the rest</summary>
@@ -226,7 +226,7 @@ sell at the end. The strategy is only interesting if it can beat this.
 
 </details>
 
-## 🧪 Testing
+## Testing
 
     pip install pytest
     pytest
